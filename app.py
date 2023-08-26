@@ -6,36 +6,30 @@ import matplotlib.pyplot as plt
 import sympy as sp
 from scipy.interpolate import pade
 
-# =========================
-# Utility Functions
-# =========================
-
 
 def refine_x_values_around_singularities(x_values, threshold=1e-3):
-    """
-    Generate a refined set of x-values avoiding regions near tan singularities.
-    """
-    x_scale = max(x_values)
+    """Generate a refined set of x-values avoiding regions near tan singularities."""
+    refined_x_values = []
     singularities = [
         (2 * n + 1) * np.pi / 2
         for n in range(int(-x_scale / np.pi), int(x_scale / np.pi))
     ]
 
-    refined_x_values = []
     for i in range(len(x_values) - 1):
         refined_x_values.append(x_values[i])
         for singularity in singularities:
+            # If the current x value and next x value bracket a singularity
             if x_values[i] < singularity < x_values[i + 1]:
-                refined_x_values.extend(
-                    [singularity - threshold, singularity + threshold]
-                )
-
+                refined_x_values.append(singularity - threshold)
+                refined_x_values.append(singularity + threshold)
     refined_x_values.append(x_values[-1])
+
     return np.array(refined_x_values)
 
 
-def compute_pade_approximation(taylor_coeffs, n, m):
+def compute_pade(taylor_coeffs, n, m):
     """Compute Pade approximation with degree n for numerator and m for denominator."""
+    # Convert symbolic coefficients to numerical values
     numerical_coeffs = [float(coeff.evalf()) for coeff in taylor_coeffs]
     try:
         p, q = pade(numerical_coeffs, m)
@@ -78,29 +72,32 @@ def generate_pade_expression(p, q):
 
 
 def is_valid_expression(expr):
-    """Validate the given expression based on allowed functions."""
     x = sp.symbols("x")
     allowed_functions = [sp.sin, sp.cos, sp.tan, sp.log, sp.exp]
 
     try:
+        # Parse the expression
         parsed_expr = sp.sympify(expr, locals={"x": x})
-        if any(symbol != x for symbol in parsed_expr.free_symbols):
-            return False
 
+        # Check for unwanted symbols
+        for symbol in parsed_expr.free_symbols:
+            if symbol != x:
+                return False
+
+        # Validate against allowed functions and operators
         atoms = parsed_expr.atoms(sp.Function, sp.Pow, sp.Mul, sp.Add)
-        return all(
-            (isinstance(atom, sp.Function) and atom.func in allowed_functions)
-            or not isinstance(atom, sp.Function)
-            for atom in atoms
-        )
+        for atom in atoms:
+            if isinstance(atom, sp.Function) and atom.func not in allowed_functions:
+                return False
 
-    except Exception:
+        return True
+    except Exception as e:
         return False
 
 
 def evaluate_expression(expr, x_val):
-    """Evaluate the given expression at a particular x-value."""
     x = sp.symbols("x")
+
     if not is_valid_expression(expr):
         return "Invalid function."
 
@@ -124,106 +121,103 @@ def evaluate_expression(expr, x_val):
         return str(e)
 
 
-# =========================
-# Streamlit Application
-# =========================
+# Streamlit code
+st.title("Compare Taylor and Pade Approximation")
+
+# Taking user input for the function
+func_str = st.text_input("Enter your function in terms of x (e.g., sin(x) or x**2):")
+
+# User input for Taylor approximation order
+taylor_order = st.sidebar.number_input(
+    "Order of Approximation:", min_value=0, max_value=20, value=2, step=1
+)
 
 
-def main():
-    st.title("Compare Taylor and Pade Approximation")
-
-    func_str = st.text_input(
-        "Enter your function in terms of x (e.g., sin(x) or x**2):"
-    )
-    taylor_order = st.sidebar.number_input(
-        "Order of Approximation:", min_value=0, max_value=20, value=2, step=1
-    )
-    show_taylor = st.sidebar.checkbox("Show Taylor's Approximation", value=True)
-    show_pade = st.sidebar.checkbox("Show Pade's Approximation", value=True)
-
-    # Validations
-    if not isinstance(taylor_order, int) or not (0 <= taylor_order <= 20):
-        st.error("Please enter a valid Taylor order (integer between 0 and 20).")
-        return
-
-    x_scale = st.number_input("X-axis scale:", value=10.0)
-    y_scale = st.number_input("Y-axis scale:", value=10.0)
-
-    if func_str:
-        original_x_values = np.linspace(-x_scale, x_scale, 400)
-        x_values = refine_x_values_around_singularities(original_x_values)
-        y_values = [evaluate_expression(func_str, val) for val in x_values]
-
-        if isinstance(y_values[0], (int, float, np.number)):
-            # Displaying the plot
-            plot_approximations(
-                x_values,
-                y_values,
-                func_str,
-                taylor_order,
-                show_taylor,
-                show_pade,
-                x_scale,
-                y_scale,
-            )
-        else:
-            st.error(y_values[0])
+# Checkboxes to show Taylor's and Pade's approximation
+show_taylor = st.sidebar.checkbox("Show Taylor's Approximation", value=True)
+show_pade = st.sidebar.checkbox("Show Pade's Approximation", value=True)
 
 
-def plot_approximations(
-    x_values, y_values, func_str, taylor_order, show_taylor, show_pade, x_scale, y_scale
-):
-    """Plot original function, Taylor, and Pade approximations."""
-    plt.figure(figsize=(8, 6))
-    plt.plot(x_values, y_values, label=func_str)
+# Ensure Taylor order is a valid integer
+if not isinstance(taylor_order, int) or taylor_order < 0 or taylor_order > 20:
+    st.error("Please enter a valid Taylor order (integer between 0 and 20).")
+    taylor_order = None  # Invalidate the Taylor order to prevent further processing
 
-    x_symbol = sp.symbols("x")
-    func_sympy = sp.sympify(func_str)
-    taylor_expansion = func_sympy.series(x_symbol, 0, taylor_order + 1).removeO()
+# User inputs for x and y scales
+x_scale = st.number_input("X-axis scale:", value=10.0)
+y_scale = st.number_input("Y-axis scale:", value=10.0)
 
-    if show_taylor:
-        st.sidebar.write(f"Taylor's Approximation (Order {taylor_order}):")
-        st.sidebar.latex(sp.latex(taylor_expansion))
+if func_str:
+    original_x_values = np.linspace(-x_scale, x_scale, 400)
+    x_values = refine_x_values_around_singularities(original_x_values)
+    y_values = [evaluate_expression(func_str, val) for val in x_values]
 
-        taylor_func = sp.lambdify(x_symbol, taylor_expansion, "numpy")
-        y_taylor = taylor_func(x_values)
-        plt.plot(
-            x_values, y_taylor, label=f"Taylor Approximation (Order {taylor_order})"
-        )
+    if isinstance(y_values[0], (int, float, np.number)):
+        plt.figure(figsize=(8, 6))
+        plt.plot(x_values, y_values, label=func_str)
 
-    if show_pade:
-        taylor_coeffs = [
-            taylor_expansion.coeff(x_symbol, i) for i in range(taylor_order + 1)
-        ]
-        n = taylor_order // 2
-        m = taylor_order - taylor_order // 2
-        p, q = compute_pade_approximation(taylor_coeffs, n, m)
+        # If user selects Taylor's approximation
+        if show_taylor and taylor_order is not None:
+            x_symbol = sp.symbols("x")
+            func_sympy = sp.sympify(func_str)
+            taylor_expansion = func_sympy.series(
+                x_symbol, 0, taylor_order + 1
+            ).removeO()
 
-        if p is not None:
-            st.sidebar.write(
-                f"Pade's Approximation (Numerator Order {n}, Denominator Order {m}:"
-            )
-            st.sidebar.latex(generate_pade_expression(p, q))
+            # Display the Taylor's approximation expression on the sidebar
+            st.sidebar.write(f"Taylor's Approximation (Order {taylor_order}):")
+            st.sidebar.latex(sp.latex(taylor_expansion))
 
-            pade_func = lambda x: np.polyval(p.coeffs, x) / np.polyval(q.coeffs, x)
-            y_pade = pade_func(x_values)
+            taylor_func = sp.lambdify(x_symbol, taylor_expansion, "numpy")
+            y_taylor = taylor_func(x_values)
+
             plt.plot(
-                x_values,
-                y_pade,
-                label=f"Pade's Approximation (Numerator Order {n}, Denominator Order {m}:",
+                x_values, y_taylor, label=f"Taylor Approximation (Order {taylor_order})"
             )
 
-    plt.title("Function and its Approximations")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.ylim([-y_scale, y_scale])
-    plt.xlim([-x_scale, x_scale])
-    plt.axhline(0, color="black", linewidth=0.5)
-    plt.axvline(0, color="black", linewidth=0.5)
-    plt.legend()
-    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-    st.pyplot(plt)
+        # If user selects Pade approximation
+        if show_pade and taylor_order is not None:
+            x_symbol = sp.symbols("x")
+            func_sympy = sp.sympify(func_str)
+            taylor_expansion = func_sympy.series(
+                x_symbol, 0, taylor_order + 1
+            ).removeO()
+            taylor_coeffs = [
+                taylor_expansion.coeff(x_symbol, i) for i in range(taylor_order + 1)
+            ]
 
+            n = taylor_order // 2
+            m = taylor_order - taylor_order // 2
+            p, q = compute_pade(taylor_coeffs, n, m)
+            if p is not None and q is not None:
+                # Create callable polynomial functions for p and q
+                p_func = np.poly1d(p.coeffs)
+                q_func = np.poly1d(q.coeffs)
 
-if __name__ == "__main__":
-    main()
+                # Evaluate the Pade approximation
+                y_pade = [p_func(val) / q_func(val) for val in x_values]
+
+                plt.plot(
+                    x_values,
+                    y_pade,
+                    label=f"Pade Approximation (Numerator Order {n}, Denominator Order {m})",
+                )
+                pade_expression = generate_pade_expression(p, q)
+                st.sidebar.write(
+                    f"Pade Approximation (Numerator Order {n}, Denominator Order {m}):"
+                )
+                st.sidebar.latex(pade_expression)
+
+        # Center the coordinate plane around (0, 0) and set the scale
+        plt.xlim([-x_scale, x_scale])
+        plt.ylim([-y_scale, y_scale])
+        plt.axhline(0, color="black", linewidth=0.5)
+        plt.axvline(0, color="black", linewidth=0.5)
+        plt.title("y = f(x)")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.legend()
+        plt.grid(True)
+        st.pyplot(plt)
+    else:
+        st.error(y_values[0])
