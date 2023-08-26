@@ -7,29 +7,68 @@ import sympy as sp
 from scipy.interpolate import pade
 
 
+def refine_x_values_around_singularities(x_values, threshold=1e-3):
+    """Generate a refined set of x-values avoiding regions near tan singularities."""
+    refined_x_values = []
+    singularities = [
+        (2 * n + 1) * np.pi / 2
+        for n in range(int(-x_scale / np.pi), int(x_scale / np.pi))
+    ]
+
+    for i in range(len(x_values) - 1):
+        refined_x_values.append(x_values[i])
+        for singularity in singularities:
+            # If the current x value and next x value bracket a singularity
+            if x_values[i] < singularity < x_values[i + 1]:
+                refined_x_values.append(singularity - threshold)
+                refined_x_values.append(singularity + threshold)
+    refined_x_values.append(x_values[-1])
+
+    return np.array(refined_x_values)
+
+
 def compute_pade(taylor_coeffs, n, m):
     """Compute Pade approximation with degree n for numerator and m for denominator."""
     # Convert symbolic coefficients to numerical values
     numerical_coeffs = [float(coeff.evalf()) for coeff in taylor_coeffs]
-    p, q = pade(numerical_coeffs, m)
-    return p, q
+    try:
+        p, q = pade(numerical_coeffs, m)
+        return p, q
+    except np.linalg.LinAlgError:
+        st.error(
+            "Failed to compute the Pade approximation due to numerical instability. Consider changing Order of Approximation."
+        )
+        return None, None
 
 
 def generate_pade_expression(p, q):
     """Generate Pade approximation expression from polynomial coefficients."""
-    num_expr = " + ".join(
+
+    def format_term(coeff, i):
+        if i == 0:
+            return f"{coeff:.1f}"
+        elif i == 1:
+            return f"{coeff:.1f}x"
+        else:
+            return f"{coeff:.1f}x^{i}"
+
+    num_expr = " ".join(
         [
-            f"{coeff:.3f}x^{i}" if i != 0 else f"{coeff:.3f}"
+            f"{'+' if coeff >= 0 else '-'} {format_term(abs(coeff), i)}"
             for i, coeff in enumerate(p.coeffs[::-1])
+            if coeff != 0
         ]
-    )
-    den_expr = " + ".join(
+    ).lstrip("+ ")
+
+    den_expr = " ".join(
         [
-            f"{coeff:.3f}x^{i}" if i != 0 else f"{coeff:.3f}"
+            f"{'+' if coeff >= 0 else '-'} {format_term(abs(coeff), i)}"
             for i, coeff in enumerate(q.coeffs[::-1])
+            if coeff != 0
         ]
-    )
-    return rf"\frac{{{num_expr}}}{{{den_expr}}}"
+    ).lstrip("+ ")
+
+    return f"({num_expr}) / ({den_expr})"
 
 
 def is_valid_expression(expr):
@@ -109,7 +148,8 @@ x_scale = st.number_input("X-axis scale:", value=10.0)
 y_scale = st.number_input("Y-axis scale:", value=10.0)
 
 if func_str:
-    x_values = np.linspace(-x_scale, x_scale, 400)
+    original_x_values = np.linspace(-x_scale, x_scale, 400)
+    x_values = refine_x_values_around_singularities(original_x_values)
     y_values = [evaluate_expression(func_str, val) for val in x_values]
 
     if isinstance(y_values[0], (int, float, np.number)):
@@ -149,24 +189,24 @@ if func_str:
             n = taylor_order // 2
             m = taylor_order - taylor_order // 2
             p, q = compute_pade(taylor_coeffs, n, m)
+            if p is not None and q is not None:
+                # Create callable polynomial functions for p and q
+                p_func = np.poly1d(p.coeffs)
+                q_func = np.poly1d(q.coeffs)
 
-            # Create callable polynomial functions for p and q
-            p_func = np.poly1d(p.coeffs)
-            q_func = np.poly1d(q.coeffs)
+                # Evaluate the Pade approximation
+                y_pade = [p_func(val) / q_func(val) for val in x_values]
 
-            # Evaluate the Pade approximation
-            y_pade = [p_func(val) / q_func(val) for val in x_values]
-
-            plt.plot(
-                x_values,
-                y_pade,
-                label=f"Pade Approximation (Numerator Order {n}, Denominator Order {m})",
-            )
-            pade_expression = generate_pade_expression(p, q)
-            st.sidebar.write(
-                f"Pade Approximation (Numerator Order {n}, Denominator Order {m}):"
-            )
-            st.sidebar.latex(pade_expression)
+                plt.plot(
+                    x_values,
+                    y_pade,
+                    label=f"Pade Approximation (Numerator Order {n}, Denominator Order {m})",
+                )
+                pade_expression = generate_pade_expression(p, q)
+                st.sidebar.write(
+                    f"Pade Approximation (Numerator Order {n}, Denominator Order {m}):"
+                )
+                st.sidebar.latex(pade_expression)
 
         # Center the coordinate plane around (0, 0) and set the scale
         plt.xlim([-x_scale, x_scale])
